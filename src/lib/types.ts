@@ -121,6 +121,8 @@ export interface Order {
   shipping_company: string | null
   customer_note: string | null
   admin_note: string | null
+  payment_transaction_id: string | null
+  payment_error: string | null
   created_at: string
   updated_at: string
   items?: OrderItem[]

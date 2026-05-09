@@ -1,55 +1,73 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import { useCart } from '@/context/CartContext'
-import { supabase } from '@/lib/supabase'
 import { supabaseBrowser } from '@/lib/supabase-browser'
-import { Lock, MapPin, CreditCard, CheckCircle2, ChevronRight, ShieldCheck, ImageIcon, ShoppingCart } from 'lucide-react'
+import { supabase } from '@/lib/supabase'
+import { Lock, MapPin, CreditCard, ChevronRight, ShieldCheck, ImageIcon, ShoppingCart } from 'lucide-react'
+import { VisaIcon, MastercardIcon, TroyIcon } from '@/components/icons/PaymentIcons'
+
+interface ThreeDFormData {
+  processCardFormUrl: string
+  threeDSessionId: string
+  cardHolderName: string
+  cardNo: string
+  expireDate: string  // MM/YY
+  cvv: string
+}
 
 export default function CheckoutPage() {
   const router = useRouter()
   const { cart, cartTotal, clearCart } = useCart()
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [user, setUser] = useState<any>(null)
   const [shippingRate, setShippingRate] = useState(0)
   const [shippingFreeThreshold, setShippingFreeThreshold] = useState(0)
   const [taxRate, setTaxRate] = useState(0)
   const [whatsappNumber, setWhatsappNumber] = useState('')
-  
   const [isReady, setIsReady] = useState(false)
-  const [orderSuccess, setOrderSuccess] = useState<{ orderNumber: string; total: number } | null>(null)
+
+  // Tosla 3DS form auto-submit
+  const [threeDFormData, setThreeDFormData] = useState<ThreeDFormData | null>(null)
+  const toslaFormRef = useRef<HTMLFormElement>(null)
+
   const [address, setAddress] = useState({
     fullName: '', phone: '', email: '', city: '', district: '', fullAddress: ''
   })
-  
   const [card, setCard] = useState({
     name: '', number: '', expiry: '', cvc: ''
   })
   const [errors, setErrors] = useState<Record<string, string>>({})
 
-  // Auth Guard Removed (Allows Guest Checkout)
   useEffect(() => {
     async function initCheckout() {
       const { data: { session } } = await supabaseBrowser.auth.getSession()
-      if (session) {
-        setUser(session.user)
-      }
+      if (session) setUser(session.user)
 
-      // Fetch Shipping Settings
-      const { data } = await supabase.from('site_settings').select('shipping_free_threshold, shipping_flat_rate, whatsapp_number, tax_rate').single()
+      const { data } = await supabase
+        .from('site_settings')
+        .select('shipping_free_threshold, shipping_flat_rate, whatsapp_number, tax_rate')
+        .single()
       if (data) {
         setShippingFreeThreshold(data.shipping_free_threshold ?? 0)
         setShippingRate(data.shipping_flat_rate ?? 0)
         setTaxRate(data.tax_rate ?? 0)
         setWhatsappNumber(data.whatsapp_number || '')
       }
-      
       setIsReady(true)
     }
     initCheckout()
   }, [])
+
+  // Tosla form hazır olduğunda otomatik submit et
+  useEffect(() => {
+    if (threeDFormData && toslaFormRef.current) {
+      toslaFormRef.current.submit()
+    }
+  }, [threeDFormData])
 
   if (!isReady) {
     return (
@@ -67,7 +85,9 @@ export default function CheckoutPage() {
   if (cart.length === 0 && !loading) {
     return (
       <div className="min-h-[70vh] bg-neutral-50 flex items-center justify-center flex-col gap-4">
-        <div className="w-16 h-16 bg-neutral-200 rounded-full flex items-center justify-center text-neutral-500"><ShoppingCart className="w-8 h-8" /></div>
+        <div className="w-16 h-16 bg-neutral-200 rounded-full flex items-center justify-center text-neutral-500">
+          <ShoppingCart className="w-8 h-8" />
+        </div>
         <h2 className="text-2xl font-bold font-heading">Sepetiniz Boş</h2>
         <p className="text-neutral-500">Ödeme adımına geçmek için önce ürün eklemelisiniz.</p>
         <button onClick={() => router.push('/kategori')} className="btn btn-primary mt-2">Alışverişe Başla</button>
@@ -79,9 +99,7 @@ export default function CheckoutPage() {
   const taxAmount = cartTotal * (taxRate / 100)
   const grandTotal = cartTotal + taxAmount + shippingValue
 
-  async function handleCheckout(e: React.FormEvent) {
-    e.preventDefault()
-
+  function validate(): boolean {
     const newErrors: Record<string, string> = {}
     if (address.fullName.trim().length < 3) newErrors.fullName = 'Ad soyad en az 3 karakter olmalıdır.'
     if (!/^(05\d{9}|5\d{9}|\+905\d{9})$/.test(address.phone.replace(/\s/g, ''))) newErrors.phone = 'Geçerli bir Türk telefon numarası girin (ör: 05XX XXX XX XX).'
@@ -97,177 +115,104 @@ export default function CheckoutPage() {
       const [mm, yy] = card.expiry.split('/').map(Number)
       const now = new Date()
       const expYear = 2000 + yy
-      const expMonth = mm
-      if (mm < 1 || mm > 12 || expYear < now.getFullYear() || (expYear === now.getFullYear() && expMonth < now.getMonth() + 1)) {
+      if (mm < 1 || mm > 12 || expYear < now.getFullYear() || (expYear === now.getFullYear() && mm < now.getMonth() + 1)) {
         newErrors.cardExpiry = 'Kartın son kullanma tarihi geçmiş.'
       }
     }
-    if (!/^\d{3}$/.test(card.cvc)) newErrors.cardCvc = 'CVC 3 haneli olmalıdır.'
-
+    if (!/^\d{3,4}$/.test(card.cvc)) newErrors.cardCvc = 'CVC 3 haneli olmalıdır.'
     setErrors(newErrors)
-    if (Object.keys(newErrors).length > 0) return
+    return Object.keys(newErrors).length === 0
+  }
+
+  async function handleCheckout(e: React.FormEvent) {
+    e.preventDefault()
+    setError(null)
+    if (!validate()) return
 
     setLoading(true)
-
     try {
-      // 1. Yeni Adres Kaydı (Eğer var olanı seçme ekranı yapsaydık bu adımı atlardık)
-      const { data: addressData, error: addressError } = await supabaseBrowser
-        .from('addresses')
-        .insert([{
-          user_id: user?.id || null,
-          label: 'Teslimat Adresi',
-          full_name: address.fullName,
-          phone: address.phone,
-          city: address.city,
-          district: address.district,
-          address_line: address.fullAddress,
-          address_type: 'both',
-          is_default: true
-        }])
-        .select()
-        .single()
-
-      if (addressError) throw new Error('Adres kaydedilirken bir hata oluştu: ' + addressError.message)
-      const addressId = addressData.id
-
-      // 2. Sipariş (Order) Oluşturma
-      const orderNumber = 'ENR-' + Date.now().toString().slice(-6)
-
-      const { data: orderData, error: orderError } = await supabaseBrowser
-        .from('orders')
-        .insert([{
-          order_number: orderNumber,
-          user_id: user?.id || null,
-          status: 'pending',
-          payment_method: 'credit_card',
-          payment_status: 'paid',
-          subtotal: cartTotal,
-          tax_amount: taxAmount,
-          shipping_cost: shippingValue,
-          total: grandTotal,
-          shipping_address_id: addressId,
-          billing_address_id: addressId
-        }])
-        .select()
-        .single()
-
-      if (orderError) throw new Error('Sipariş işlenemedi: ' + orderError.message)
-
-      // 3. Sipariş Kalemlerini (Order Items) Ekleme
-      const orderItemsToInsert = cart.map((item: any) => ({
-        order_id: orderData.id,
-        product_id: item.id,
-        product_name: item.name,
-        product_image: item.image_url,
+      const items = cart.map((item: any) => ({
+        product_id: item.product_id,
+        variant_id: item.variant_id ?? null,
+        variant_label: item.variant_label ?? null,
         quantity: item.quantity,
-        unit_price: item.dealer_price ?? item.sale_price ?? item.price,
-        total_price: (item.dealer_price ?? item.sale_price ?? item.price) * item.quantity
       }))
 
-      const { error: itemsError } = await supabaseBrowser.from('order_items').insert(orderItemsToInsert)
-      if (itemsError) throw new Error('Siparişteki ürünler işlenirken hata oluştu.')
+      const res = await fetch('/api/odeme/baslat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          address: {
+            fullName: address.fullName,
+            phone: address.phone,
+            email: address.email || null,
+            city: address.city,
+            district: address.district,
+            fullAddress: address.fullAddress,
+          },
+          items,
+          userId: user?.id ?? null,
+        }),
+      })
 
-      // 3.5 Stokları Düşür
-      for (const item of cart) {
-        // Mevcut stoğu öğren (eşzamanlı satın alımlarda eksiye düşmeyi önlemek için veritabanından çekmek daha güvenli)
-        const { data: pData } = await supabaseBrowser.from('products').select('stock_quantity').eq('id', item.id).single()
-        if (pData && pData.stock_quantity !== undefined) {
-          const newStock = Math.max(0, pData.stock_quantity - item.quantity)
-          await supabaseBrowser.from('products').update({ stock_quantity: newStock }).eq('id', item.id)
-        }
+      const data = await res.json()
+
+      if (!res.ok || !data.success) {
+        setError(data.error ?? 'Ödeme başlatılamadı. Lütfen tekrar deneyin.')
+        setLoading(false)
+        window.scrollTo({ top: 0, behavior: 'smooth' })
+        return
       }
 
-      // 4. Sepeti Temizle ve Başarı Durumunu Göster
+      // Sepeti temizle (sipariş oluşturuldu)
       clearCart()
 
-      if (user) {
-        router.push('/hesabim?tab=siparisler')
-      } else {
-        setOrderSuccess({ orderNumber, total: grandTotal })
-        setLoading(false)
-      }
-
-    } catch (error: any) {
+      // Tosla 3DS form'unu hazırla ve otomatik submit et
+      setThreeDFormData({
+        processCardFormUrl: data.processCardFormUrl,
+        threeDSessionId: data.threeDSessionId,
+        cardHolderName: card.name.toUpperCase(),
+        cardNo: card.number.replace(/\s/g, ''),
+        expireDate: card.expiry,  // MM/YY
+        cvv: card.cvc,
+      })
+      // useEffect tetiklenir ve form submit edilir — sayfa Tosla'ya gider
+    } catch {
+      setError('Sunucu bağlantısı kurulamadı. Lütfen tekrar deneyin.')
       setLoading(false)
-      // hata mesajını kullanıcıya göster (basit inline state eklenebilir, şimdilik alert kaldı)
       window.scrollTo({ top: 0, behavior: 'smooth' })
-      alert(error.message)
     }
   }
 
-  // Görüntü (Format) Yardımcıları
-  const formatPrice = (price: number) => {
-    return new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY', minimumFractionDigits: 0 }).format(price)
-  }
+  const formatPrice = (price: number) =>
+    new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY', minimumFractionDigits: 0 }).format(price)
 
-  // Kredi Kartı Boşluk Ayarı
   const handleCardNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value.replace(/\s/g, '').replace(/[^0-9]/gi, '')
-    const matches = value.match(/\d{4,16}/g)
-    const match = matches && matches[0] || ''
+    const match = (value.match(/\d{4,16}/g)?.[0] || value)
     const parts = []
-    for (let i = 0; i < match.length; i += 4) {
-      parts.push(match.substring(i, i + 4))
-    }
-    if (parts.length) {
-      setCard({ ...card, number: parts.join(' ') })
-    } else {
-      setCard({ ...card, number: value })
-    }
-  }
-
-  if (orderSuccess) {
-    return (
-      <div className="min-h-[70vh] bg-[#f8f9fa] flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-sm border border-neutral-100 p-8 max-w-lg w-full text-center space-y-6">
-          <div className="w-16 h-16 rounded-full bg-green-50 flex items-center justify-center mx-auto">
-            <CheckCircle2 className="w-9 h-9 text-green-500" />
-          </div>
-          <div>
-            <h2 className="text-2xl font-bold font-heading text-neutral-800">Ödemeniz Alındı!</h2>
-            <p className="text-neutral-500 mt-2 text-sm">Siparişiniz başarıyla oluşturuldu.</p>
-          </div>
-
-          <div className="bg-neutral-50 rounded-xl p-5 space-y-2 text-sm text-left">
-            <div className="flex justify-between">
-              <span className="text-neutral-500">Sipariş Numarası</span>
-              <span className="font-bold text-neutral-800 font-mono">{orderSuccess.orderNumber}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-neutral-500">Toplam Tutar</span>
-              <span className="font-bold text-primary-600">{formatPrice(orderSuccess.total)}</span>
-            </div>
-          </div>
-
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800 text-left">
-            <p className="font-semibold mb-1">Sipariş numaranızı not alın</p>
-            <p>Siparişinizi takip edebilmek için <span className="font-mono font-bold">{orderSuccess.orderNumber}</span> numarasını bir yere kaydedin.</p>
-          </div>
-
-          <div className="border border-primary-100 bg-primary-50 rounded-xl p-5 text-sm text-left space-y-3">
-            <p className="text-neutral-700">Siparişlerinizi kolayca takip etmek ister misiniz?</p>
-            <p className="text-neutral-500">Ücretsiz hesap oluşturarak tüm siparişlerinizi tek bir yerden görüntüleyebilirsiniz.</p>
-            <a
-              href="/hesabim?tab=register"
-              className="btn btn-primary w-full text-center block"
-            >
-              Hesap Oluştur ve Siparişleri Takip Et
-            </a>
-          </div>
-
-          <button
-            onClick={() => router.push('/')}
-            className="text-sm text-neutral-500 hover:text-neutral-700 underline underline-offset-2"
-          >
-            Ana sayfaya dön
-          </button>
-        </div>
-      </div>
-    )
+    for (let i = 0; i < match.length; i += 4) parts.push(match.substring(i, i + 4))
+    setCard({ ...card, number: parts.length ? parts.join(' ') : value })
   }
 
   return (
     <div className="min-h-screen bg-[#f8f9fa] pt-8 pb-20">
+      {/* Tosla 3DS Hidden Form — useEffect ile otomatik submit edilir */}
+      {threeDFormData && (
+        <form
+          ref={toslaFormRef}
+          method="POST"
+          action={threeDFormData.processCardFormUrl}
+          style={{ display: 'none' }}
+        >
+          <input type="hidden" name="ThreeDSessionId" value={threeDFormData.threeDSessionId} />
+          <input type="hidden" name="CardHolderName" value={threeDFormData.cardHolderName} />
+          <input type="hidden" name="CardNo" value={threeDFormData.cardNo} />
+          <input type="hidden" name="ExpireDate" value={threeDFormData.expireDate} />
+          <input type="hidden" name="Cvv" value={threeDFormData.cvv} />
+        </form>
+      )}
+
       <div className="container-custom">
         {/* Adım Takibi */}
         <div className="flex items-center gap-3 text-sm mb-8 font-medium">
@@ -276,12 +221,18 @@ export default function CheckoutPage() {
           <span className="text-primary-600 flex items-center gap-1.5"><Lock className="w-3.5 h-3.5" /> Güvenli Ödeme</span>
         </div>
 
+        {error && (
+          <div className="mb-6 bg-red-50 border border-red-200 rounded-xl p-4 text-red-700 text-sm">
+            {error}
+          </div>
+        )}
+
         <form onSubmit={handleCheckout} className="flex flex-col lg:flex-row gap-8 items-start">
-          
+
           {/* Sol: Form Alanları */}
           <div className="w-full lg:flex-1 space-y-6">
-            
-            {/* Teslimat Adresi Kutu */}
+
+            {/* Teslimat Adresi */}
             <div className="bg-white rounded-2xl p-6 lg:p-8 shadow-sm border border-neutral-100">
               <div className="flex items-center gap-3 mb-6">
                 <div className="w-10 h-10 rounded-full bg-primary-50 flex items-center justify-center text-primary-600">
@@ -289,7 +240,7 @@ export default function CheckoutPage() {
                 </div>
                 <h2 className="text-xl font-bold font-heading">Teslimat Adresi</h2>
               </div>
-              
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-neutral-700">Ad Soyad *</label>
@@ -326,7 +277,7 @@ export default function CheckoutPage() {
               </div>
             </div>
 
-            {/* Ödeme Bilgileri Kutu */}
+            {/* Ödeme Bilgileri */}
             <div className="bg-white rounded-2xl p-6 lg:p-8 shadow-sm border border-neutral-100">
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-3">
@@ -335,9 +286,13 @@ export default function CheckoutPage() {
                   </div>
                   <h2 className="text-xl font-bold font-heading">Ödeme Bilgileri</h2>
                 </div>
-                <Image src="/paytr.png" alt="PayTR" width={80} height={28} className="h-7 w-auto object-contain" />
+                <div className="flex items-center gap-2">
+                  <VisaIcon className="h-6 w-auto" />
+                  <MastercardIcon className="h-6 w-auto" />
+                  <TroyIcon className="h-6 w-auto" />
+                </div>
               </div>
-              
+
               <div className="space-y-4">
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-neutral-700">Kart Üzerindeki İsim *</label>
@@ -360,35 +315,34 @@ export default function CheckoutPage() {
                   </div>
                   <div className="space-y-2">
                     <label className="text-sm font-medium text-neutral-700">CVC *</label>
-                    <input type="text" required value={card.cvc} onChange={e => setCard({...card, cvc: e.target.value})} maxLength={3} className="input font-mono" placeholder="123" />
+                    <input type="text" required value={card.cvc} onChange={e => setCard({...card, cvc: e.target.value})} maxLength={4} className="input font-mono" placeholder="123" />
                     {errors.cardCvc && <p className="text-red-500 text-sm mt-1">{errors.cardCvc}</p>}
                   </div>
                 </div>
               </div>
-              
+
               <div className="mt-6 flex items-center gap-2 text-xs text-neutral-500 bg-neutral-50 p-3 rounded-lg border border-neutral-100">
                 <ShieldCheck className="w-5 h-5 text-green-500 shrink-0" />
-                <p>Kart bilgileriniz 256-bit SSL sertifikası ile şifrelenerek korunmaktadır. Bu site kart bilgilerinizi kendi sunucularında kaydetmez.</p>
+                <p>Kart bilgileriniz 256-bit SSL ile şifrelenerek Tosla güvenli ödeme altyapısı üzerinden işlenir. Bu site kart bilgilerinizi kaydetmez.</p>
               </div>
             </div>
-
           </div>
 
-          {/* Sağ: Sipariş Özeti (Sepet) */}
+          {/* Sağ: Sipariş Özeti */}
           <div className="w-full lg:w-[400px] xl:w-[450px] shrink-0 sticky top-28">
             <div className="bg-white rounded-2xl p-6 shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-neutral-100">
               <h2 className="text-lg font-bold font-heading mb-4 border-b border-neutral-100 pb-4">Sipariş Özeti</h2>
-              
+
               <div className="max-h-[300px] overflow-y-auto space-y-4 mb-6 pr-2 custom-scrollbar">
                 {cart.map((item: any) => (
                   <div key={item.id} className="flex gap-4">
                     <div className="w-16 h-16 rounded-lg bg-neutral-100 border border-neutral-200 overflow-hidden shrink-0 relative">
-                     {item.image_url ? (
-                       <Image src={item.image_url} alt={item.name} fill className="object-cover" sizes="64px" />
-                     ) : (
-                       <div className="w-full h-full flex items-center justify-center text-2xl opacity-20"><ImageIcon className="w-6 h-6 text-neutral-400" /></div>
-                     )}
-                     <span className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-neutral-800 text-white rounded-full flex items-center justify-center text-[10px] font-bold z-10">{item.quantity}</span>
+                      {item.image_url ? (
+                        <Image src={item.image_url} alt={item.name} fill className="object-cover" sizes="64px" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center"><ImageIcon className="w-6 h-6 text-neutral-400" /></div>
+                      )}
+                      <span className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-neutral-800 text-white rounded-full flex items-center justify-center text-[10px] font-bold z-10">{item.quantity}</span>
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="font-semibold text-sm text-neutral-800 line-clamp-2">{item.name}</p>
@@ -398,7 +352,6 @@ export default function CheckoutPage() {
                 ))}
               </div>
 
-              {/* Totals */}
               <div className="bg-neutral-50 rounded-xl p-4 space-y-3">
                 <div className="flex items-center justify-between text-neutral-600 text-sm">
                   <span>Ara Toplam</span>
@@ -418,34 +371,29 @@ export default function CheckoutPage() {
                 </div>
                 <div className="pt-3 border-t border-neutral-200 flex items-center justify-between">
                   <span className="font-bold text-neutral-800">Genel Toplam</span>
-                  <span className="font-bold text-xl text-primary-600 font-heading">
-                    {formatPrice(grandTotal)}
-                  </span>
+                  <span className="font-bold text-xl text-primary-600 font-heading">{formatPrice(grandTotal)}</span>
                 </div>
               </div>
 
-              {/* Submit Button */}
-              <button 
-                type="submit" 
+              <button
+                type="submit"
                 disabled={loading}
-                className="btn btn-primary w-full mt-6 py-4 text-base relative group shadow-lg shadow-primary-500/20"
+                className="btn btn-primary w-full mt-6 py-4 text-base relative shadow-lg shadow-primary-500/20"
               >
                 {loading ? (
                   <span className="flex items-center justify-center gap-2">
                     <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    Sipariş Onaylanıyor...
+                    3D Secure'e Yönlendiriliyor...
                   </span>
                 ) : (
                   <span className="flex items-center justify-center gap-2">
                     <Lock className="w-4 h-4" />
-                    Siparişi Onayla
+                    Güvenli Ödeme Yap
                   </span>
                 )}
               </button>
-
             </div>
 
-            {/* WhatsApp — desktop only */}
             {whatsappNumber && (
               <a
                 href={`https://wa.me/${whatsappNumber.replace(/\s/g, '').replace(/^\+/, '').replace(/^0/, '90')}?text=${encodeURIComponent('Merhaba, siparişim hakkında yardım almak istiyorum.')}`}
@@ -465,9 +413,7 @@ export default function CheckoutPage() {
                 <ChevronRight className="w-4 h-4 text-neutral-400 group-hover:text-green-500 transition-colors shrink-0" />
               </a>
             )}
-
           </div>
-
         </form>
       </div>
     </div>

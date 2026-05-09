@@ -373,7 +373,7 @@ export default function ProductListClient({ categories, usdRate: usdRateProp }: 
                 </th>
                 {showDealerPrice && (
                   <th className="text-right px-4 py-3 font-semibold text-neutral-600 border-b border-neutral-200">
-                    Bayi Fiyatı (₺)
+                    Bayi Fiyatı ($)
                   </th>
                 )}
               </tr>
@@ -408,7 +408,7 @@ export default function ProductListClient({ categories, usdRate: usdRateProp }: 
                           </td>
                           {showDealerPrice && (
                             <td className="px-4 py-3 text-right text-neutral-600">
-                              {formatTRY(product.dealer_price)}
+                              {formatUSD(product.dealer_price, usdRate)}
                             </td>
                           )}
                         </tr>
@@ -419,8 +419,9 @@ export default function ProductListClient({ categories, usdRate: usdRateProp }: 
               })()}
             </tbody>
           </table>
-          <div className="px-4 py-3 bg-neutral-50 border-t border-neutral-200 text-sm text-neutral-500 print:bg-gray-50">
-            Toplam {filteredProducts.length} ürün · {grouped.length} kategori
+          <div className="px-4 py-3 bg-neutral-50 border-t border-neutral-200 text-sm text-neutral-500 print:bg-gray-50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+            <span>Toplam {filteredProducts.length} ürün · {grouped.length} kategori</span>
+            <span className="italic text-xs sm:text-sm">* Tüm fiyatlara KDV dahildir</span>
           </div>
         </div>
       ) : null}

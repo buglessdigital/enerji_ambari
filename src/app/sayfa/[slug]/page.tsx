@@ -69,7 +69,7 @@ export default function StaticPageDetail({ params }: { params: Promise<{ slug: s
 
         {/* Content Section */}
         <div className="container-custom mt-8 sm:mt-12 max-w-4xl">
-          <div className="bg-white rounded-3xl p-8 sm:p-12 shadow-sm border border-neutral-100">
+          <div className="bg-white rounded-3xl p-8 sm:p-12 shadow-sm border border-neutral-100 overflow-hidden">
             {loading ? (
               <div className="space-y-6">
                 <div className="h-8 w-3/4 skeleton rounded-lg" />
@@ -91,8 +91,8 @@ export default function StaticPageDetail({ params }: { params: Promise<{ slug: s
                 </Link>
               </div>
             ) : (
-              <div 
-                className="prose prose-neutral prose-primary max-w-none prose-headings:font-heading prose-headings:font-bold prose-p:text-neutral-600 prose-p:leading-relaxed prose-a:text-primary-600 prose-li:text-neutral-600"
+              <div
+                className="prose prose-neutral prose-primary max-w-none prose-headings:font-heading prose-headings:font-bold prose-p:text-neutral-600 prose-p:leading-relaxed prose-a:text-primary-600 prose-li:text-neutral-600 [&_*]:break-words [&_*]:overflow-wrap-anywhere overflow-hidden"
                 dangerouslySetInnerHTML={{ __html: sanitizeHtml(page.content || '<p>Bu sayfanın içeriği henüz girilmemiştir.</p>') }}
               />
             )}

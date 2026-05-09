@@ -83,17 +83,17 @@ function AccountPageInner() {
   }, [])
 
   async function fetchProfile(userId: string) {
-    const { data } = await supabase.from('profiles').select('*').eq('id', userId).single()
+    const { data } = await supabaseBrowser.from('profiles').select('*').eq('id', userId).single()
     if (data) setProfile(data)
   }
 
   async function fetchAddresses(userId: string) {
-    const { data } = await supabase.from('addresses').select('*').eq('user_id', userId).order('is_default', { ascending: false }).order('created_at', { ascending: false })
+    const { data } = await supabaseBrowser.from('addresses').select('*').eq('user_id', userId).order('is_default', { ascending: false }).order('created_at', { ascending: false })
     if (data) setAddresses(data)
   }
 
   async function fetchOrders(userId: string) {
-    const { data } = await supabase.from('orders').select('*, items:order_items(count)').eq('user_id', userId).order('created_at', { ascending: false })
+    const { data } = await supabaseBrowser.from('orders').select('*, items:order_items(count)').eq('user_id', userId).order('created_at', { ascending: false })
     if (data) setOrders(data)
   }
 
@@ -135,7 +135,7 @@ function AccountPageInner() {
     e.preventDefault()
     setSavingProfile(true)
     setProfileSuccess('')
-    const { error } = await supabase.from('profiles').update({
+    const { error } = await supabaseBrowser.from('profiles').update({
       full_name: profile.full_name,
       phone: profile.phone,
     }).eq('id', session.user.id)
@@ -145,7 +145,7 @@ function AccountPageInner() {
 
   const deleteAddress = async (id: string) => {
     if (!confirm('Silmek istediğinizden emin misiniz?')) return
-    await supabase.from('addresses').delete().eq('id', id)
+    await supabaseBrowser.from('addresses').delete().eq('id', id)
     fetchAddresses(session.user.id)
   }
 
@@ -181,19 +181,37 @@ function AccountPageInner() {
 
     // Varsayılan yapılıyorsa önce diğerlerini sıfırla
     if (addressForm.is_default) {
-      await supabase.from('addresses').update({ is_default: false }).eq('user_id', session.user.id)
+      await supabaseBrowser.from('addresses').update({ is_default: false }).eq('user_id', session.user.id)
+    }
+
+    // Prepare payload to match database schema exactly
+    const payload = {
+      label: addressForm.label,
+      full_name: addressForm.full_name,
+      phone: addressForm.phone,
+      city: addressForm.city,
+      district: addressForm.district,
+      address_line: addressForm.address_line,
+      zip_code: addressForm.zip_code || null,
+      is_default: addressForm.is_default,
+      address_type: addressForm.address_type,
+    }
+
+    // Include neighborhood in address_line if provided (since it's not in DB schema)
+    if (addressForm.neighborhood && !payload.address_line.includes(addressForm.neighborhood)) {
+      payload.address_line = `${addressForm.neighborhood} Mah. ${payload.address_line}`
     }
 
     let error
     if (editingAddress) {
-      const result = await supabase.from('addresses').update({
-        ...addressForm,
+      const result = await supabaseBrowser.from('addresses').update({
+        ...payload,
         updated_at: new Date().toISOString(),
       }).eq('id', editingAddress.id)
       error = result.error
     } else {
-      const result = await supabase.from('addresses').insert({
-        ...addressForm,
+      const result = await supabaseBrowser.from('addresses').insert({
+        ...payload,
         user_id: session.user.id,
       })
       error = result.error
@@ -201,7 +219,8 @@ function AccountPageInner() {
 
     setAddressSaving(false)
     if (error) {
-      setAddressError('Adres kaydedilirken bir hata oluştu. Lütfen tekrar deneyin.')
+      console.error("Address save error:", error)
+      setAddressError(`Adres kaydedilirken bir hata oluştu: ${error.message || error.details || JSON.stringify(error)}`)
     } else {
       setAddressModal(false)
       fetchAddresses(session.user.id)

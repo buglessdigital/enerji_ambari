@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
+import { VisaIcon, MastercardIcon, TroyIcon } from '@/components/icons/PaymentIcons'
 import {
   Phone,
   Mail,
@@ -230,9 +231,11 @@ export default function Footer() {
         <div className="container-custom py-5">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             {/* Payment Logos */}
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <span className="text-xs text-neutral-500 mr-2">Güvenli Ödeme:</span>
-              <Image src="/paytr.png" alt="PayTR" width={80} height={28} className="h-7 w-auto object-contain" />
+              <VisaIcon className="h-7 w-auto" />
+              <MastercardIcon className="h-7 w-auto" />
+              <TroyIcon className="h-8 w-auto" />
             </div>
 
             {/* Copyright */}
