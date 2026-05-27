@@ -164,10 +164,10 @@ export default function CheckoutPage() {
         return
       }
 
-      // Sepeti temizle (sipariş oluşturuldu)
-      clearCart()
-
       // Tosla 3DS form'unu hazırla ve otomatik submit et
+      // NOT: clearCart() kasıtlı olarak BURAYA çağrılmıyor.
+      // Sepet, /odeme/sonuc başarı ekranında temizlenir.
+      // Böylece ödeme başarısız olursa kullanıcı tekrar deneyebilir.
       setThreeDFormData({
         processCardFormUrl: data.processCardFormUrl,
         threeDSessionId: data.threeDSessionId,
@@ -208,7 +208,7 @@ export default function CheckoutPage() {
           <input type="hidden" name="ThreeDSessionId" value={threeDFormData.threeDSessionId} />
           <input type="hidden" name="CardHolderName" value={threeDFormData.cardHolderName} />
           <input type="hidden" name="CardNo" value={threeDFormData.cardNo} />
-          <input type="hidden" name="ExpireDate" value={threeDFormData.expireDate} />
+          <input type="hidden" name="ExpireDate" value={threeDFormData.expireDate.replace('/', '')} />
           <input type="hidden" name="Cvv" value={threeDFormData.cvv} />
         </form>
       )}

@@ -46,6 +46,20 @@ export async function POST(request: Request) {
     const isSuccess = isValid && bankResponseCode === '00'
 
     if (isSuccess) {
+      // İdempotency: sipariş daha önce işlendiyse tekrar işleme (stok iki kez düşmesin)
+      const { data: existingOrder } = await supabaseAdmin
+        .from('orders')
+        .select('payment_status')
+        .eq('order_number', orderId)
+        .single()
+
+      if (existingOrder?.payment_status === 'paid') {
+        return NextResponse.redirect(
+          `${SITE_URL}/odeme/sonuc?order=${encodeURIComponent(orderId)}&status=success`,
+          303
+        )
+      }
+
       // Ödeme başarılı: siparişi güncelle
       await supabaseAdmin
         .from('orders')

@@ -43,7 +43,7 @@ export async function createThreeDSession(
   const apiUser = process.env.TOSLA_API_USER!
   const apiPass = process.env.TOSLA_API_PASS!
 
-  const rnd = Math.floor(Math.random() * 10000).toString()
+  const rnd = crypto.randomBytes(4).readUInt32BE(0).toString()
   const timeSpan = turkishTimeSpan()
   const hash = makeHash(apiPass, clientId, apiUser, rnd, timeSpan)
 

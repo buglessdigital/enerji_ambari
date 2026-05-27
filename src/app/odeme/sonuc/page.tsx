@@ -2,15 +2,25 @@
 
 import { useSearchParams, useRouter } from 'next/navigation'
 import { CheckCircle2, XCircle, ShoppingCart } from 'lucide-react'
-import { Suspense } from 'react'
+import { Suspense, useEffect } from 'react'
+import { useCart } from '@/context/CartContext'
 
 function SonucIcerik() {
   const params = useSearchParams()
   const router = useRouter()
+  const { clearCart } = useCart()
 
   const status = params.get('status')
   const orderNumber = params.get('order')
   const isSuccess = status === 'success'
+
+  // Ödeme başarılıysa sepeti temizle (tek seferlik)
+  useEffect(() => {
+    if (isSuccess) {
+      clearCart()
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSuccess])
 
   if (isSuccess) {
     return (
